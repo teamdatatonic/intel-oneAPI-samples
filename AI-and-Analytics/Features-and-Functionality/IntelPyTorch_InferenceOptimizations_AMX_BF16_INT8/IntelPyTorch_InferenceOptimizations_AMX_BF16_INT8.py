@@ -10,8 +10,12 @@
 '''
 
 import os
+from datetime import datetime
 from time import time
+from codecarbon import EmissionsTracker
+from google.cloud import aiplatform
 import matplotlib.pyplot as plt
+import requests
 import torch
 import intel_extension_for_pytorch as ipex
 from intel_extension_for_pytorch.quantization import prepare, convert
@@ -108,25 +112,31 @@ def runInference(model, data, modelName="resnet50", dataType="FP32", amx=True):
                 for i in range(20):
                     model(data)
                 
-                # Measure latency
+                # Measure latency and CO2 emissions
+                tracker_ex = EmissionsTracker()
+                tracker_ex.start()
                 start_time = time()
                 for i in range(NUM_SAMPLES):
                     model(data)
                 end_time = time()
+                emissions_ex: float = tracker_ex.stop()
         else:
             # Warm up
             for i in range(20):
                 model(data)
             
-            # Measure latency
+            # Measure latency and CO2 emissions
             start_time = time()
+            tracker_ex = EmissionsTracker(pue=1.08)
+            tracker_ex.start()
             for i in range(NUM_SAMPLES):
                 model(data)
             end_time = time()
+            emissions_ex: float = tracker_ex.stop()
     inference_time = end_time - start_time
-    print("Inference on %d samples took %.3f seconds" %(NUM_SAMPLES, inference_time))
+    print("Inference on %d samples took %.3f seconds and emitted %.6f kg CO2" %(NUM_SAMPLES, inference_time, emissions_ex))
 
-    return inference_time
+    return inference_time, emissions_ex
 
 """
 Prints out results and displays figures summarizing output.
@@ -145,12 +155,12 @@ def summarizeResults(modelName="", results=None):
     for key in results.keys():
         print("%s inference time: %.3f seconds" %(key, results[key]))
 
-    # Create bar chart with inference time results
-    plt.figure()
-    plt.title("%s Inference Time (%d samples)" %(modelName, NUM_SAMPLES))
-    plt.xlabel("Run Case")
-    plt.ylabel("Inference Time (seconds)")
-    plt.bar(results.keys(), results.values())
+    # # Create bar chart with inference time results
+    # plt.figure()
+    # plt.title("%s Inference Time (%d samples)" %(modelName, NUM_SAMPLES))
+    # plt.xlabel("Run Case")
+    # plt.ylabel("Inference Time (seconds)")
+    # plt.bar(results.keys(), results.values())
 
     # Calculate speedup when using AMX
     print("\n")
@@ -163,13 +173,13 @@ def summarizeResults(modelName="", results=None):
     print("\n\n")
 
     # Create bar chart with speedup results
-    plt.figure()
-    plt.title("%s AMX BF16/INT8 Speedup over FP32" %modelName)
-    plt.xlabel("Run Case")
-    plt.ylabel("Speedup")
-    plt.bar(results.keys(), 
-        [1, bf16_with_amx_speedup, int8_with_vnni_speedup, int8_with_amx_speedup]
-    )
+    # plt.figure()
+    # plt.title("%s AMX BF16/INT8 Speedup over FP32" %modelName)
+    # plt.xlabel("Run Case")
+    # plt.ylabel("Speedup")
+    # plt.bar(results.keys(), 
+    #     [1, bf16_with_amx_speedup, int8_with_vnni_speedup, int8_with_amx_speedup]
+    # )
 
 """
 Perform all types of inference in main function
@@ -184,7 +194,7 @@ def main():
     # Check if hardware supports AMX
     import sys
     sys.path.append('../../')
-    import version_check
+    # import version_check
     from cpuinfo import get_cpu_info
     info = get_cpu_info()
     flags = info['flags']
@@ -201,36 +211,69 @@ def main():
     resnet_model = models.resnet50(pretrained=True)
     resnet_data = torch.rand(1, 3, 224, 224)
     resnet_model.eval()
-    fp32_resnet_inference_time = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="FP32", amx=True)
-    bf16_amx_resnet_inference_time = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="BF16", amx=True)
-    int8_with_vnni_resnet_inference_time = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="INT8", amx=False)
-    int8_amx_resnet_inference_time = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="INT8", amx=True)
-    results_resnet = {
+    fp32_resnet_inference_time, fp32_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="FP32", amx=True)
+    bf16_amx_resnet_inference_time, bf16_amx_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="BF16", amx=True)
+    int8_with_vnni_resnet_inference_time, int8_with_vnni_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="INT8", amx=False)
+    int8_amx_resnet_inference_time, int8_amx_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="INT8", amx=True)
+    time_results_resnet = {
         "FP32": fp32_resnet_inference_time,
         "BF16_with_AMX": bf16_amx_resnet_inference_time,
         "INT8_with_VNNI": int8_with_vnni_resnet_inference_time,
         "INT8_with_AMX": int8_amx_resnet_inference_time
     }
-    summarizeResults("ResNet50", results_resnet)
+    co2_results_resnet = {
+        "FP32": fp32_resnet_co2,
+        "BF16_with_AMX": bf16_amx_resnet_co2,
+        "INT8_with_VNNI": int8_with_vnni_resnet_co2,
+        "INT8_with_AMX": int8_amx_resnet_co2
+    }
+
+    summarizeResults("ResNet50", time_results_resnet)
 
     # BERT
     bert_model = torch.hub.load('huggingface/pytorch-transformers', 'model', 'bert-base-uncased') 
     bert_data = torch.randint(bert_model.config.vocab_size, size=[BERT_BATCH_SIZE, BERT_SEQ_LENGTH])
     bert_model.eval()
-    fp32_bert_inference_time = runInference(bert_model, bert_data, modelName="bert", dataType="FP32", amx=True)
-    bf16_amx_bert_inference_time = runInference(bert_model, bert_data, modelName="bert", dataType="BF16", amx=True)
-    int8_with_vnni_bert_inference_time = runInference(bert_model, bert_data, modelName="bert", dataType="INT8", amx=False)
-    int8_amx_bert_inference_time = runInference(bert_model, bert_data, modelName="bert", dataType="INT8", amx=True)
-    results_bert = {
+    fp32_bert_inference_time, fp32_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="FP32", amx=True)
+    bf16_amx_bert_inference_time, bf16_amx_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="BF16", amx=True)
+    int8_with_vnni_bert_inference_time, int8_with_vnni_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="INT8", amx=False)
+    int8_amx_bert_inference_time, int8_amx_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="INT8", amx=True)
+    time_results_bert = {
         "FP32": fp32_bert_inference_time,
         "BF16_with_AMX": bf16_amx_bert_inference_time,
         "INT8_with_VNNI": int8_with_vnni_bert_inference_time,
-        "INT8_with_AMX": int8_amx_bert_inference_time
+        "INT8_with_AMX": int8_amx_bert_inference_time,
     }
-    summarizeResults("BERT", results_bert)
+    co2_results_bert = {
+        "FP32": fp32_bert_co2,
+        "BF16_with_AMX": bf16_amx_bert_co2,
+        "INT8_with_VNNI": int8_with_vnni_bert_co2,
+        "INT8_with_AMX": int8_amx_bert_co2,
+    }
+    summarizeResults("BERT", time_results_bert)
+
+    # Get machine type from metadata server
+    metadata_server = "http://metadata/computeMetadata/v1/instance/"
+    metadata_flavor = {'Metadata-Flavor' : 'Google'}
+    gce_machine_type = requests.get(metadata_server + 'machine-type', headers = metadata_flavor).text
+    gce_machine_type = gce_machine_type.split("/")[-1] # get last part only
+    print("Google Cloud machine type: %s" %gce_machine_type)
+
+    # Log experiment results to Vertex
+    aiplatform.init(experiment="co2-tracking")
+    now = datetime.now()
+    now = now.strftime("%Y-%m-%d--%H%M%S")
+    with aiplatform.start_run(f"{gce_machine_type}-{now}") as my_run:
+        my_run.log_params({
+            "machine_type": gce_machine_type
+        })
+        my_run.log_metrics({"BERT_" + key + "_TIME": value for (key,value) in time_results_bert.items()})
+        my_run.log_metrics({"RESNET_" + key + "_TIME": value for (key,value) in time_results_resnet.items()})
+        my_run.log_metrics({"BERT_" + key + "_CO2": value for (key,value) in co2_results_bert.items()})
+        my_run.log_metrics({"RESNET_" + key + "_CO2": value for (key,value) in co2_results_resnet.items()})
 
     # Display graphs
-    plt.show()
+    # plt.show()
 
 if __name__ == '__main__':
     main()

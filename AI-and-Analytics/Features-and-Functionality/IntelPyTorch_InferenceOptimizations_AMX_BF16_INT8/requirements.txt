@@ -3,3 +3,9 @@ py-cpuinfo
 transformers 
 sentencepiece 
 sacremoses
+codecarbon
+google-cloud-aiplatform
+requests
+torch
+intel_extension_for_pytorch
+torchvision
