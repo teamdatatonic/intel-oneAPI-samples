@@ -139,49 +139,6 @@ def runInference(model, data, modelName="resnet50", dataType="FP32", amx=True):
     return inference_time, emissions_ex
 
 """
-Prints out results and displays figures summarizing output.
-"""
-def summarizeResults(modelName="", results=None):
-    """
-    Input parameters
-        modelName: a str representing the name of the model
-        results: a dict with the run case and its corresponding time in seconds
-    Return value
-        None
-    """
-
-    # Inference time results
-    print("\nSummary for %s (%d samples)" %(modelName, NUM_SAMPLES))
-    for key in results.keys():
-        print("%s inference time: %.3f seconds" %(key, results[key]))
-
-    # # Create bar chart with inference time results
-    # plt.figure()
-    # plt.title("%s Inference Time (%d samples)" %(modelName, NUM_SAMPLES))
-    # plt.xlabel("Run Case")
-    # plt.ylabel("Inference Time (seconds)")
-    # plt.bar(results.keys(), results.values())
-
-    # Calculate speedup when using AMX
-    print("\n")
-    bf16_with_amx_speedup = results["FP32"] / results["BF16_with_AMX"]
-    print("BF16 with AMX is %.2fX faster than FP32" %bf16_with_amx_speedup)
-    int8_with_vnni_speedup = results["FP32"] / results["INT8_with_VNNI"]
-    print("INT8 with VNNI is %.2fX faster than FP32" %int8_with_vnni_speedup)
-    int8_with_amx_speedup = results["FP32"] / results["INT8_with_AMX"]
-    print("INT8 with AMX is %.2fX faster than FP32" %int8_with_amx_speedup)
-    print("\n\n")
-
-    # Create bar chart with speedup results
-    # plt.figure()
-    # plt.title("%s AMX BF16/INT8 Speedup over FP32" %modelName)
-    # plt.xlabel("Run Case")
-    # plt.ylabel("Speedup")
-    # plt.bar(results.keys(), 
-    #     [1, bf16_with_amx_speedup, int8_with_vnni_speedup, int8_with_amx_speedup]
-    # )
-
-"""
 Perform all types of inference in main function
 
 Inference run cases for both Resnet50 and BERT
@@ -203,54 +160,54 @@ def main():
         if "amx" in flag:
             amx_supported = True
             break
-    if not amx_supported:
-        print("AMX is not supported on current hardware. Code sample cannot be run.\n")
-        return
 
     # ResNet50
     resnet_model = models.resnet50(pretrained=True)
     resnet_data = torch.rand(1, 3, 224, 224)
     resnet_model.eval()
-    fp32_resnet_inference_time, fp32_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="FP32", amx=True)
-    bf16_amx_resnet_inference_time, bf16_amx_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="BF16", amx=True)
+    time_results_resnet = {}
+    co2_results_resnet = {}
+    if amx_supported:
+        fp32_resnet_inference_time, fp32_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="FP32", amx=True)
+        bf16_amx_resnet_inference_time, bf16_amx_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="BF16", amx=True)
+        int8_amx_resnet_inference_time, int8_amx_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="INT8", amx=True)
+        time_results_resnet = {
+            "FP32": fp32_resnet_inference_time,
+            "BF16_with_AMX": bf16_amx_resnet_inference_time,
+            "INT8_with_AMX": int8_amx_resnet_inference_time
+        }
+        co2_results_resnet = {
+            "FP32": fp32_resnet_co2,
+            "BF16_with_AMX": bf16_amx_resnet_co2,
+            "INT8_with_AMX": int8_amx_resnet_co2
+        }
     int8_with_vnni_resnet_inference_time, int8_with_vnni_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="INT8", amx=False)
-    int8_amx_resnet_inference_time, int8_amx_resnet_co2 = runInference(resnet_model, resnet_data, modelName="resnet50", dataType="INT8", amx=True)
-    time_results_resnet = {
-        "FP32": fp32_resnet_inference_time,
-        "BF16_with_AMX": bf16_amx_resnet_inference_time,
-        "INT8_with_VNNI": int8_with_vnni_resnet_inference_time,
-        "INT8_with_AMX": int8_amx_resnet_inference_time
-    }
-    co2_results_resnet = {
-        "FP32": fp32_resnet_co2,
-        "BF16_with_AMX": bf16_amx_resnet_co2,
-        "INT8_with_VNNI": int8_with_vnni_resnet_co2,
-        "INT8_with_AMX": int8_amx_resnet_co2
-    }
-
-    summarizeResults("ResNet50", time_results_resnet)
+    time_results_resnet["INT8_with_VNNI"] = int8_with_vnni_resnet_inference_time
+    co2_results_resnet["INT8_with_VNNI"] = int8_with_vnni_resnet_co2
 
     # BERT
     bert_model = torch.hub.load('huggingface/pytorch-transformers', 'model', 'bert-base-uncased') 
     bert_data = torch.randint(bert_model.config.vocab_size, size=[BERT_BATCH_SIZE, BERT_SEQ_LENGTH])
     bert_model.eval()
-    fp32_bert_inference_time, fp32_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="FP32", amx=True)
-    bf16_amx_bert_inference_time, bf16_amx_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="BF16", amx=True)
+    time_results_bert = {}
+    co2_results_bert = {}
+    if amx_supported:
+        fp32_bert_inference_time, fp32_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="FP32", amx=True)
+        bf16_amx_bert_inference_time, bf16_amx_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="BF16", amx=True)
+        int8_amx_bert_inference_time, int8_amx_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="INT8", amx=True)
+        time_results_bert = {
+            "FP32": fp32_bert_inference_time,
+            "BF16_with_AMX": bf16_amx_bert_inference_time,
+            "INT8_with_AMX": int8_amx_bert_inference_time,
+        }
+        co2_results_bert = {
+            "FP32": fp32_bert_co2,
+            "BF16_with_AMX": bf16_amx_bert_co2,
+            "INT8_with_AMX": int8_amx_bert_co2,
+        }
     int8_with_vnni_bert_inference_time, int8_with_vnni_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="INT8", amx=False)
-    int8_amx_bert_inference_time, int8_amx_bert_co2 = runInference(bert_model, bert_data, modelName="bert", dataType="INT8", amx=True)
-    time_results_bert = {
-        "FP32": fp32_bert_inference_time,
-        "BF16_with_AMX": bf16_amx_bert_inference_time,
-        "INT8_with_VNNI": int8_with_vnni_bert_inference_time,
-        "INT8_with_AMX": int8_amx_bert_inference_time,
-    }
-    co2_results_bert = {
-        "FP32": fp32_bert_co2,
-        "BF16_with_AMX": bf16_amx_bert_co2,
-        "INT8_with_VNNI": int8_with_vnni_bert_co2,
-        "INT8_with_AMX": int8_amx_bert_co2,
-    }
-    summarizeResults("BERT", time_results_bert)
+    time_results_bert["INT8_with_VNNI"] = int8_with_vnni_bert_inference_time
+    co2_results_bert["INT8_with_VNNI"] = int8_with_vnni_bert_co2
 
     # Get machine type from metadata server
     metadata_server = "http://metadata/computeMetadata/v1/instance/"
@@ -271,9 +228,6 @@ def main():
         my_run.log_metrics({"RESNET_" + key + "_TIME": value for (key,value) in time_results_resnet.items()})
         my_run.log_metrics({"BERT_" + key + "_CO2": value for (key,value) in co2_results_bert.items()})
         my_run.log_metrics({"RESNET_" + key + "_CO2": value for (key,value) in co2_results_resnet.items()})
-
-    # Display graphs
-    # plt.show()
 
 if __name__ == '__main__':
     main()
