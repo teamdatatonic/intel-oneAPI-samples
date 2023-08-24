@@ -1,0 +1,10 @@
+# 1. Create a VM in Compute Engine using an Ubuntu Server 22.04 image
+# 2. Add below to the Compute Engine startup script
+
+sudo apt update && \
+sudo apt install -y python3-pip && \
+git clone --branch=feat/co2_benchmarking https://github.com/teamdatatonic/intel-oneAPI-samples.git && \
+cd intel-oneAPI-samples/AI-and-Analytics/Features-and-Functionality/IntelPyTorch_InferenceOptimizations_AMX_BF16_INT8 && \
+pip install -r requirements.txt && \
+python3 IntelPyTorch_InferenceOptimizations_AMX_BF16_INT8.py && \
+sudo shutdown now
